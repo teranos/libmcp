@@ -39,7 +39,9 @@ test: all
 install: all
 	install -d $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/lib/pkgconfig
 	install -m 644 include/mcp.h $(DESTDIR)$(PREFIX)/include/
-	install -m 644 $(BUILD)/libmcp.a $(SHARED) $(DESTDIR)$(PREFIX)/lib/
+# The archive alone: a consumer embeds the client, and -lmcp then resolves to
+# it with no shared library to find at run time. The shared one is for the tests.
+	install -m 644 $(BUILD)/libmcp.a $(DESTDIR)$(PREFIX)/lib/
 	sed 's|@PREFIX@|$(PREFIX)|g' libmcp.pc.in > $(BUILD)/libmcp.pc
 	install -m 644 $(BUILD)/libmcp.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
 
