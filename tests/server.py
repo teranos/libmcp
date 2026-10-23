@@ -50,6 +50,8 @@ for line in sys.stdin:
         assert not modern and not initialized
         initialized = True
         result = {"protocolVersion": "2099-01-01" if mode == "bad-version" else "2024-11-05" if mode == "old-version" else "2025-11-25", "capabilities": {"tools": {}, "resources": {}, "prompts": {}}, "serverInfo": {"name": "test", "version": "1"}}
+    elif method == "notifications/cancelled":
+        continue
     elif method == "notifications/initialized":
         assert initialized and not modern
         continue
@@ -92,7 +94,7 @@ for line in sys.stdin:
             # Retain whitespace, Unicode, data and exact error code at the ABI.
             sys.stdout.write(' {"jsonrpc":"2.0", "id":%d, "error":{"code":-32001,"message":"sacred ☃","data":{"nested":[0,null,false]}}}\n' % ident)
             sys.stdout.flush(); continue
-        if method == "test/input":
+        if method == "resources/read" and params.get("uri") == "test:input":
             result = {"resultType": "input_required", "requestState": "opaque", "inputRequests": {}}
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": "hello"}})

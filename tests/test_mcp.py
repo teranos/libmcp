@@ -143,15 +143,25 @@ class MCP(unittest.TestCase):
         self.assertEqual(self.response.error_code, -32001)
         self.assertTrue(self.response.raw().startswith(b' {"jsonrpc"'))
         self.assertEqual(self.response.value()["error"]["data"], {"nested": [0, None, False]})
-        self.assertEqual(self.request("test/input"), 10)
+        self.assertEqual(self.request("resources/read", b'{"uri":"test:input"}'), 10)
         self.assertEqual(self.response.value()["result"]["requestState"], "opaque")
         lib.mcp_response_free(C.byref(self.response))
         self.assertEqual(lib.mcp_tools_call(self.client, b"fail", b'{}', C.byref(self.response), C.byref(self.error)), 11)
         self.assertEqual(self.request("ping"), 0)
 
+    def test_malformed_frame_is_preserved(self):
+        self.assertEqual(self.open(), 0)
+        self.assertEqual(self.request("test/invalid"), 6)
+        self.assertEqual(self.response.raw(), b'{bad json}')
+
+    def test_truncated_frame_is_preserved(self):
+        self.assertEqual(self.open(), 0)
+        self.assertEqual(self.request("test/partial"), 6)
+        self.assertEqual(self.response.raw(), b'{"jsonrpc":')
+
     def test_bad_params_do_not_break_connection(self):
         self.assertEqual(self.open(), 0)
-        for params in (b"[]", b"null", b"{} trailing", b"{", b'123', b'{"_meta":false}', b'{"_meta":null}'):
+        for params in (b"[]", b"null", b"{} trailing", b"{", b'123', b'{"_meta":false}', b'{"_meta":null}', b'{"_meta":{"progressToken":null}}'):
             self.assertEqual(self.request("test/echo", params), 1, params)
         self.assertEqual(self.request("ping"), 0)
 
@@ -168,12 +178,13 @@ class MCP(unittest.TestCase):
         self.assertEqual(self.error.system_errno, 2)
         self.assertFalse(self.client)
 
-    def test_deadline_and_poisoned_connection(self):
+    def test_deadline_keeps_connection_usable(self):
         self.assertEqual(self.open(), 0)
         start = time.monotonic()
         self.assertEqual(self.request("test/timeout"), 4)
         self.assertLess(time.monotonic() - start, 0.9)
-        self.assertEqual(self.request("ping"), 8)
+        time.sleep(0.6)  # Let the deliberately blocking legacy test peer resume.
+        self.assertEqual(self.request("ping"), 0)
 
     def test_notification_flood_has_absolute_deadline(self):
         self.assertEqual(self.open(), 0)
