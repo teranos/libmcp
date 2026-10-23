@@ -1,5 +1,5 @@
 {
-  description = "libmcp: a C11 MCP stdio client with a C ABI";
+  description = "libmcp: a C11 MCP stdio and Streamable HTTP client with a C ABI";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -33,7 +33,7 @@
             src = ./.;
 
             nativeBuildInputs = [ pkgs.pkg-config pkgs.python3 ];
-            buildInputs = [ (jsonC pkgs) ];
+            buildInputs = [ (jsonC pkgs) pkgs.curl ];
 
             buildPhase = "make";
             doCheck = true;
@@ -50,7 +50,7 @@
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.pkg-config pkgs.python3 (jsonC pkgs) ];
+            packages = [ pkgs.pkg-config pkgs.python3 (jsonC pkgs) pkgs.curl ];
           };
         });
     };

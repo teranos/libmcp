@@ -11,7 +11,10 @@ size_t mcp_test_layout(unsigned i) {
         offsetof(mcp_options, probe_timeout_ms), offsetof(mcp_options, shutdown_timeout_ms),
         offsetof(mcp_options, max_message_bytes), offsetof(mcp_options, on_message),
         offsetof(mcp_options, context), offsetof(mcp_error, message), offsetof(mcp_error, cleanup_message),
-        offsetof(mcp_response, length), offsetof(mcp_response, error_code)
+        offsetof(mcp_response, length), offsetof(mcp_response, error_code),
+        sizeof(mcp_features), offsetof(mcp_features, capabilities_json),
+        offsetof(mcp_features, on_request), offsetof(mcp_features, context),
+        offsetof(mcp_features, max_pending)
     };
     return i < sizeof(values) / sizeof(values[0]) ? values[i] : (size_t)-1;
 }
