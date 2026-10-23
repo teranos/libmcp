@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define MCP_VERSION "0.1.0"
+#define MCP_VERSION "0.2.0"
 #define MCP_PROTOCOL_VERSION "2026-07-28"
 
 typedef struct mcp_client mcp_client;
@@ -27,7 +27,11 @@ typedef enum mcp_status {
     MCP_MESSAGE_TOO_LARGE,
     MCP_INPUT_REQUIRED,
     MCP_TOOL_ERROR,
-    MCP_UNSUPPORTED
+    MCP_UNSUPPORTED,
+    MCP_PENDING,
+    MCP_CANCELLED,
+    MCP_HTTP_ERROR,
+    MCP_AUTH_REQUIRED
 } mcp_status;
 
 typedef enum mcp_protocol {
@@ -50,7 +54,8 @@ typedef struct mcp_error {
 } mcp_error;
 
 /* Initialize to {0}. Free before reusing. json is the complete received frame,
- * byte for byte, without its final LF (or CRLF); free only with this library.
+ * byte for byte, without its final LF (or CRLF); explicit host/catalog helpers
+ * instead return their documented JSON values. Free only with this library.
  * A response can be populated on non-OK returns. Never discard it unchecked. */
 typedef struct mcp_response {
     char *json;
@@ -59,7 +64,7 @@ typedef struct mcp_response {
 } mcp_response;
 
 /* Borrowed frame, valid during the callback. Called for notifications and for
- * legacy server requests before ping/MethodNotFound is sent. No reentry into
+ * legacy server requests before their reply is sent. No reentry into
  * this client; callbacks must return promptly (they share the call deadline). */
 typedef void (*mcp_message_fn)(void *context, const char *json, size_t length);
 
@@ -79,6 +84,71 @@ typedef struct mcp_options {
     void *context;
 } mcp_options;
 
+typedef struct mcp_request mcp_request;
+
+/* Handler output is a result object, or an error object for MCP_REMOTE_ERROR.
+ * Use mcp_response_set to copy it into library-owned storage. A handler only
+ * runs for explicitly declared capabilities. It may decline without retrying.
+ * Callbacks run on the polling thread; no reentry into the same client. */
+typedef mcp_status (*mcp_handler_fn)(void *context, const char *method,
+                                   const char *params_json, mcp_response *result,
+                                   mcp_error *error);
+typedef struct mcp_features {
+    const char *capabilities_json;
+    mcp_handler_fn on_request;
+    void *context;
+    size_t max_pending;
+} mcp_features;
+
+void mcp_features_init(mcp_features *features);
+mcp_status mcp_response_set(mcp_response *, const char *json, mcp_error *);
+mcp_status mcp_client_open_ex(const mcp_options *, const mcp_features *,
+                              mcp_client **, mcp_response *, mcp_error *);
+/* Modern Streamable HTTP. TLS verification is mandatory; redirects are not
+ * followed. HTTP is permitted only for loopback endpoints. OAuth flows remain
+ * host-owned: bearer tokens are scoped to this exact endpoint, never forwarded
+ * to redirects. 401/403 bodies and WWW-Authenticate are retained for the host. */
+mcp_status mcp_client_open_http(const mcp_options *, const mcp_features *,
+                                const char *url, const char *bearer_token,
+                                mcp_client **, mcp_response *, mcp_error *);
+/* Create a stateless endpoint without network I/O. Issue server/discover with
+ * mcp_client_request to retain initial auth challenges on a live client. A
+ * successful discovery installs capabilities for the convenience helpers. */
+mcp_status mcp_client_create_http(const mcp_options *, const mcp_features *,
+                                  const char *url, const char *bearer_token,
+                                  mcp_client **, mcp_error *);
+mcp_status mcp_client_set_bearer(mcp_client *, const char *token, mcp_error *);
+/* Filtered HTTP tool catalog; raw tools/list responses remain byte-exact.
+ * Invalid header annotations are excluded here. Refresh tools/list before use. */
+mcp_status mcp_client_tools_catalog(mcp_client *, mcp_response *, mcp_error *);
+const char *mcp_client_auth_challenge(const mcp_client *);
+long mcp_client_http_status(const mcp_client *);
+int mcp_client_transport_code(const mcp_client *);
+
+/* submit queues a request without waiting for the server. timeout_ms must be
+ * positive and is per-request. poll(0) never waits; poll(n) waits at most n ms,
+ * bounded by the earliest request deadline. libMCP owns no worker threads;
+ * libcurl may use resolver threads.
+ * Acknowledged subscriptions live until cancelled, completed, or disconnected.
+ * Request handles belong to their client and become invalid when it closes. */
+mcp_status mcp_client_submit(mcp_client *, const char *method, const char *params,
+                             int timeout_ms, mcp_request **, mcp_error *);
+mcp_status mcp_client_poll(mcp_client *, int timeout_ms, mcp_error *);
+int64_t mcp_request_id(const mcp_request *);
+mcp_status mcp_request_status(const mcp_request *);
+mcp_status mcp_request_take(mcp_request *, mcp_response *, mcp_error *);
+mcp_status mcp_request_cancel(mcp_request *, const char *reason, mcp_error *);
+mcp_status mcp_request_resume(mcp_request *, const char *input_responses, mcp_error *);
+mcp_status mcp_request_destroy(mcp_request *, mcp_error *);
+/* Optional synchronous MRTR helper. Invokes declared feature handlers and
+ * echoes opaque requestState with a fresh RPC id for each continuation.
+ * On a host handler failure, response contains that handler's JSON error
+ * object when supplied, preserving its message and data.
+ * The whole conversation shares the original timeout; no tool is retried on
+ * transport errors. If no handler is installed, INPUT_REQUIRED is returned. */
+mcp_status mcp_client_call(mcp_client *, const char *method, const char *params,
+                           mcp_response *, mcp_error *);
+
 void mcp_options_init(mcp_options *options);
 const char *mcp_version(void);
 const char *mcp_status_string(mcp_status status);
@@ -93,9 +163,9 @@ const char *mcp_client_protocol_version(const mcp_client *client);
 
 /* params_json must be a JSON object, or NULL for {}. _meta protocol fields
  * are added for modern peers. The caller owns pagination and MRTR retries.
- * A timeout/I/O/protocol/size failure makes the connection unusable: close it.
+ * A timeout cancels only that request. Stdio I/O/protocol failures require close.
  * Calls are never automatically retried. Valid remote/tool/input errors leave
- * it usable. No HTTP, OAuth, schema validation or LLM execution is implicit. */
+ * it usable. OAuth, schema validation and LLM execution remain host-owned. */
 mcp_status mcp_client_request(mcp_client *client, const char *method,
                               const char *params_json, mcp_response *response,
                               mcp_error *error);
@@ -107,6 +177,12 @@ mcp_status mcp_resources_read(mcp_client *, const char *uri, mcp_response *, mcp
 mcp_status mcp_prompts_list(mcp_client *, const char *cursor, mcp_response *, mcp_error *);
 mcp_status mcp_prompts_get(mcp_client *, const char *name, const char *arguments_json,
                            mcp_response *, mcp_error *);
+mcp_status mcp_resource_templates_list(mcp_client *, const char *, mcp_response *, mcp_error *);
+mcp_status mcp_completion_complete(mcp_client *, const char *params_json, mcp_response *, mcp_error *);
+mcp_status mcp_subscriptions_listen(mcp_client *, const char *filter_json, mcp_request **, mcp_error *);
+mcp_status mcp_resources_subscribe(mcp_client *, const char *uri, mcp_response *, mcp_error *);
+mcp_status mcp_resources_unsubscribe(mcp_client *, const char *uri, mcp_response *, mcp_error *);
+mcp_status mcp_logging_set_level(mcp_client *, const char *level, mcp_response *, mcp_error *);
 
 /* Consumes the handle, including on error. EOF, wait, TERM, wait, KILL, reap.
  * The grace interval applies separately before TERM and before KILL.
