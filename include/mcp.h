@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define MCP_VERSION "0.2.0"
+#define MCP_VERSION "0.4.0-dev"
 #define MCP_PROTOCOL_VERSION "2026-07-28"
 
 typedef struct mcp_client mcp_client;
@@ -31,7 +31,10 @@ typedef enum mcp_status {
     MCP_PENDING,
     MCP_CANCELLED,
     MCP_HTTP_ERROR,
-    MCP_AUTH_REQUIRED
+    MCP_AUTH_REQUIRED,
+    MCP_SCHEMA_ERROR,
+    MCP_VALIDATION_ERROR,
+    MCP_VALIDATION_LIMIT
 } mcp_status;
 
 typedef enum mcp_protocol {
@@ -85,6 +88,48 @@ typedef struct mcp_options {
 } mcp_options;
 
 typedef struct mcp_request mcp_request;
+typedef struct mcp_schema mcp_schema;
+typedef struct mcp_tool mcp_tool;
+
+/* Initialize with mcp_schema_options_init. Zero limits are invalid. External
+ * references resolve ONLY from resources_json, an object mapping absolute URIs
+ * to schema values, copied during compilation. No network or file fetching.
+ * max_depth bounds in-place evaluator recursion; pattern_timeout_ms bounds
+ * each regex match, NOT the whole evaluation. max_bytes bounds each input and
+ * report. These are resource limits, not a wall-clock execution guarantee. */
+typedef struct mcp_schema_options {
+    size_t max_bytes;
+    unsigned max_depth;
+    unsigned pattern_timeout_ms;
+    const char *resources_json;
+} mcp_schema_options;
+
+void mcp_schema_options_init(mcp_schema_options *);
+/* report must be empty, and is library-owned JSON freed with response_free.
+ * Schema errors, invalid instances and abandoned evaluations are distinct.
+ * Draft 2020-12 is the default. format is an annotation unless the dialect
+ * requires assertion. Compilation checks the schema against its metaschema.
+ * No defaults, coercions or mutation of the instance. */
+mcp_status mcp_schema_compile(const char *, const mcp_schema_options *,
+                              mcp_schema **, mcp_response *report, mcp_error *);
+mcp_status mcp_schema_validate(const mcp_schema *, const char *instance_json,
+                               mcp_response *report, mcp_error *);
+void mcp_schema_destroy(mcp_schema *);
+/* Compile a tools/list tool definition; inputSchema is required. Keep the
+ * definition associated with the server that supplied it. A submitted request
+ * retains its output schema independently of the tool handle's lifetime. */
+mcp_status mcp_tool_compile(const char *, const mcp_schema_options *, mcp_tool **,
+                            mcp_response *report, mcp_error *);
+void mcp_tool_destroy(mcp_tool *);
+const char *mcp_tool_name(const mcp_tool *);
+mcp_status mcp_tool_submit(mcp_client *, const mcp_tool *, const char *arguments,
+                           int timeout_ms, mcp_request **, mcp_error *);
+/* A successful submit can return an already-completed validation failure;
+ * inspect status. Invalid input sends no bytes. Validation JSON is borrowed,
+ * survives take, and is released on resume/destroy/client close. */
+const char *mcp_request_validation_json(const mcp_request *);
+mcp_status mcp_tool_call(mcp_client *, const mcp_tool *, const char *arguments,
+                         mcp_response *, mcp_response *report, mcp_error *);
 
 /* Handler output is a result object, or an error object for MCP_REMOTE_ERROR.
  * Use mcp_response_set to copy it into library-owned storage. A handler only

@@ -18,7 +18,7 @@ all adversarial inputs, platforms or optional extensions.
 | Roots | Host callback | Opt-in modern compatibility/MRTR and legacy requests; host supplies roots and enforces URI/access policy. Legacy callback test. Deprecated in modern target. |
 | Sampling | Host callback | Capability-gated request dispatch, including tools capability; host runs models and validates results. Legacy callback test. Deprecated in modern target. |
 | Elicitation | Host callback | Explicit form/URL capabilities, MRTR and legacy dispatch; host owns UI, consent and content validation. Form MRTR and legacy tests; URL flow is not independently integration-tested. |
-| Tools | Implemented wire API | Paged list, call, separate tool/JSON-RPC/input-required errors, content passed through intact. Deterministic and official SDK tests. Full input/output schema validation is absent. |
+| Tools | Implemented wire API | Paged list, call, separate tool/JSON-RPC/input-required errors, content passed through intact. Deterministic and official SDK tests. Opt-in compiled input/output validation is implemented; see SCHEMA.md. Raw calls remain unchecked. |
 | Resources and templates | Implemented wire API | List/read/templates, cursors and MRTR envelope support. Resource read/list tests; generic raw API preserves embedded text/blob data. Template helper lacks independent SDK coverage. |
 | Prompts | Implemented wire API | List/get, cursors and MRTR envelope support. Deterministic list/get tests. |
 | Completion | Implemented wire API | Capability-gated `completion/complete`; host owns argument/context construction. Helper coverage is not exhaustive. |
@@ -28,10 +28,10 @@ all adversarial inputs, platforms or optional extensions.
 | HTTP MCP headers | Implemented | Version/method/name; sentinel Base64; static primitive `Mcp-Param-*` mirroring; invalid tool exclusion in filtered catalog. Raw wire response intentionally retained separately. HeaderMismatch refresh/retry is host-owned. |
 | HTTP authentication boundary | Implemented | Caller-provided endpoint bearer, request-owned status/transport code/challenge and raw body, explicit replacement, TLS verification and no redirects. Concurrency, repeated challenge fields, aggregate limits and continuation resets: `test_http.py`. Tokens never persisted or forwarded to redirects. No actual OAuth authorization server test. |
 | OAuth authorization | **Absent** | Protected-resource metadata, AS/OIDC discovery, issuer validation, resource indicators, PKCE, state, registration and token storage are host-owned. Not an OAuth-conformant standalone client. |
-| Full JSON Schema 2020-12 | **Absent at runtime** | No input/output/elicitation full validator. Vendored schema and Python jsonschema are test oracles only. No external-reference network fetches. This remains a material completeness gap. |
+| JSON Schema 2020-12 | Standard-dialect runtime profile | Pinned Corvus C ABI, metaschema checks, references and unevaluated keywords; 1,297 standard-keyword cases pass. Two custom-dialect groups explicitly rejected; optional fixtures not run. See SCHEMA.md for limits. Elicitation integration remains absent. |
 | Legacy HTTP and HTTP+SSE | **Absent** | Modern-only HTTP; no old session/GET transport or automatic HTTP-era fallback. |
 | Extensions | **Absent** | No task extension, experimental features or automatic caching policy. Raw methods and metadata are available for host-managed extensions. |
-| ABI and packaging | Implemented | C11 static/shared, pkg-config, D `-betterC`, 25 C/D layout comparisons, static C and live D callers. Linux tested here; macOS still requires CI execution. |
+| ABI and packaging | Implemented | C11 static/shared, pkg-config, D `-betterC`, 30 C/D layout comparisons, static C and live D callers. Linux tested here; macOS still requires CI execution. |
 
 The runtime does not yet validate every method-specific result against the full
 schema. Callbacks must return promptly; the library can reject a continuation

@@ -1,5 +1,40 @@
 # Validation
 
+## 0.4.0-dev: fresh checks on Linux x86_64
+
+- Offline source build: Cargo `--offline --locked`, bundled crates, Rust 1.98.0;
+  C11 with `-Wall -Wextra -Wpedantic -Werror`, GCC and json-c 0.17/libcurl 8.5.
+- `make test`: 78 Python ABI/protocol/runtime/HTTP/schema/checked-call tests,
+  static C embedding, parser allocation fault injection and cancellation I/O
+  failure tests passed.
+- Official JSON Schema Test Suite commit is recorded in
+  `spec/SCHEMA-PINNED.json`: **1,297 cases passed**, zero unexpected failures.
+  Five cases in two custom-dialect groups are explicitly excluded only when
+  compilation returns `MCP_UNSUPPORTED`; their names and counts are emitted in
+  the machine-readable runner output. Optional fixtures are bundled but not run.
+- Official pinned MCP Python SDK interoperability: four tests passed.
+- ASan+UBSan: all 12 schema and four checked-call tests passed with the C sources
+  instrumented. Rust backend and system dependencies were not instrumented;
+  Python-host leak detection was disabled. This is not a whole-program leak audit.
+- Installed static archive linked into a D `-betterC` consumer. The live local
+  stdio test passed and audited exactly two executions after three dispatch
+  attempts: invalid input, corrected input and invalid output. Invalid input
+  produced no wire request. C/D ABI size and offset comparisons passed.
+
+- Ground production build passed with its pinned Nix LDC 1.41.0 toolchain.
+  The MCP test targets passed: 30 ABI comparisons, 15 D subprocess round trips,
+  harness dispatch, real ACP session/server ownership, and checked dispatch.
+  A separate installed Ground binary also passed the ACP ownership fixture.
+  `make -o build test-mcp` reused the already-built production binary after a
+  link-flag correction in the test Makefile; production source was unchanged.
+  This is scoped MCP integration validation, not Ground's entire `make test` suite.
+
+The source ZIP includes logs and commands. Platform results from older sections
+below are historical and must not be read as fresh 0.4 checks. See `SCHEMA.md`
+for resource-limit and custom-dialect boundaries; no complete MCP conformance
+or exhaustive adversarial-security certification is claimed.
+
+
 ## 0.3 first increment: request-owned HTTP diagnostics
 
 Executed on Linux with json-c 0.17 and libcurl 8.5.0:
