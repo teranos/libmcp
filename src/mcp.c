@@ -24,7 +24,10 @@ const char *mcp_status_string(mcp_status s) {
                                       "pending",
                                       "cancelled",
                                       "HTTP error",
-                                      "authorization required"};
+                                      "authorization required",
+                                      "invalid schema",
+                                      "schema validation failed",
+                                      "schema evaluation limit"};
   return (unsigned)s < sizeof(names) / sizeof(*names) ? names[s]
                                                       : "unknown status";
 }
@@ -143,7 +146,8 @@ static mcp_status start(mcp_request *r, mcp_error *e) {
   return s;
 }
 static mcp_status submit(mcp_client *c, const char *method, const char *text,
-                         int ms, mcp_request **out, mcp_error *e) {
+                         int ms, mcp_request **out, mcp_error *e,
+                         const mcp_tool *tool, const char *arguments) {
   if (out)
     *out = NULL;
   if (!c || !method || !*method || !out || ms <= 0)
@@ -225,6 +229,24 @@ static mcp_status submit(mcp_client *c, const char *method, const char *text,
   r->next = c->requests;
   c->requests = r;
   c->request_count++;
+  if (tool) {
+    s = mcp_validate_phase(tool->input, arguments, "input", &r->validation, e);
+    if (s == MCP_OK && tool->output) {
+      r->output_schema = mcp_schema_clone(tool->output);
+      if (!r->output_schema) s = mcp_fail(e, MCP_NO_MEMORY, 0, "retain tool output schema");
+    }
+    if (s == MCP_OK) {
+      int64_t now = mcp_now();
+      if (now < 0) s = mcp_fail(e, MCP_SYSTEM_ERROR, errno, "read request clock");
+      else if (now >= r->deadline)
+        s = mcp_fail(e, MCP_TIMEOUT, 0, "deadline elapsed during input validation");
+    }
+    if (s != MCP_OK) {
+      mcp_finish(r, s, e);
+      *out = r;
+      return mcp_fail(e, MCP_OK, 0, "request completed locally; inspect status");
+    }
+  }
   s = start(r, e);
   if (s != MCP_OK) {
     mcp_finish(r, s, e);
@@ -241,7 +263,33 @@ mcp_status mcp_client_submit(mcp_client *c, const char *m, const char *p,
       *r = NULL;
     return mcp_fail(e, MCP_INVALID_STATE, 0, "client is not initialized");
   }
-  return submit(c, m, p, ms, r, e);
+  return submit(c, m, p, ms, r, e, NULL, NULL);
+}
+const char *mcp_request_validation_json(const mcp_request *r) {
+  return r ? r->validation.json : NULL;
+}
+mcp_status mcp_tool_submit(mcp_client *c, const mcp_tool *tool, const char *args,
+                           int ms, mcp_request **out, mcp_error *e) {
+  if (out) *out = NULL;
+  if (!c || !c->ready || !tool || !out)
+    return mcp_fail(e, MCP_INVALID_ARGUMENT, 0, "tool submit needs a ready client and compiled tool");
+  if (!args) args = "{}";
+  if (strnlen(args, c->limit + 1) > c->limit)
+    return mcp_fail(e, MCP_MESSAGE_TOO_LARGE, 0, "tool arguments exceed client byte limit");
+  json *arguments = NULL;
+  mcp_status s = mcp_parse(args, strlen(args), &arguments, e);
+  if (s) return s;
+  if (!json_object_is_type(arguments, json_type_object)) {
+    json_object_put(arguments);
+    return mcp_fail(e, MCP_INVALID_ARGUMENT, 0, "tool arguments must be an object");
+  }
+  json *p = json_object_new_object();
+  bool ok = mcp_add(p, "arguments", arguments) && mcp_add(p, "name", json_object_new_string(tool->name));
+  const char *wire = ok ? json_object_to_json_string_ext(p, JSON_C_TO_STRING_PLAIN) : NULL;
+  s = wire ? submit(c, "tools/call", wire, ms, out, e, tool, args)
+    : mcp_fail(e, MCP_NO_MEMORY, 0, "build checked tool request");
+  json_object_put(p);
+  return s;
 }
 int64_t mcp_request_id(const mcp_request *r) { return r ? r->id : 0; }
 mcp_status mcp_request_status(const mcp_request *r) {
@@ -361,6 +409,7 @@ mcp_status mcp_request_resume(mcp_request *r, const char *text, mcp_error *e) {
   mcp_buffer_free(&r->auth_challenge);
   r->receive_error = MCP_OK;
   r->receive_detail = (mcp_error){0};
+  mcp_response_free(&r->validation);
   mcp_response_free(&r->response);
   s = start(r, e);
   if (s != MCP_OK)
@@ -394,6 +443,8 @@ mcp_status mcp_request_destroy(mcp_request *r, mcp_error *e) {
   mcp_buffer_free(&r->sse_line);
   mcp_buffer_free(&r->sse_data);
   free(r->method);
+  mcp_schema_destroy(r->output_schema);
+  mcp_response_free(&r->validation);
   mcp_buffer_free(&r->auth_challenge);
   free(r);
   return s;
@@ -462,7 +513,7 @@ static mcp_status sync_request(mcp_client *c, const char *m, const char *p,
     return mcp_fail(e, MCP_INVALID_ARGUMENT, 0,
                     "output response must be empty");
   mcp_request *r = NULL;
-  mcp_status s = submit(c, m, p, ms, &r, e);
+  mcp_status s = submit(c, m, p, ms, &r, e, NULL, NULL);
   if (s != MCP_OK)
     return s;
   wait_request(r, e);
@@ -482,7 +533,7 @@ mcp_status mcp_client_call(mcp_client *c, const char *m, const char *p,
     return mcp_fail(e, MCP_INVALID_ARGUMENT, 0, "invalid call arguments");
   mcp_response_free(&c->handler_error);
   mcp_request *r = NULL;
-  mcp_status s = submit(c, m, p, c->timeout_ms, &r, e);
+  mcp_status s = submit(c, m, p, c->timeout_ms, &r, e, NULL, NULL);
   if (s != MCP_OK)
     return s;
   while ((s = wait_request(r, e)) == MCP_INPUT_REQUIRED && c->on_request) {
@@ -916,4 +967,18 @@ mcp_status mcp_client_close(mcp_client *c, mcp_error *e) {
     return s;
   }
   return mcp_fail(e, MCP_OK, 0, "success");
+}
+
+mcp_status mcp_tool_call(mcp_client *c, const mcp_tool *tool, const char *args,
+                         mcp_response *out, mcp_response *report, mcp_error *e) {
+  if (!c || !out || out->json || !report || report == out || report->json)
+    return mcp_fail(e, MCP_INVALID_ARGUMENT, 0, "tool call needs empty response and report");
+  mcp_request *r = NULL;
+  mcp_status s = mcp_tool_submit(c, tool, args, c->timeout_ms, &r, e);
+  if (s) return s;
+  wait_request(r, e);
+  s = mcp_request_take(r, out, e);
+  *report = r->validation; r->validation = (mcp_response){0};
+  mcp_request_destroy(r, NULL);
+  return s;
 }

@@ -32,6 +32,8 @@ struct mcp_request {
   mcp_status status;
   mcp_error error;
   mcp_response response;
+  mcp_response validation;
+  mcp_schema *output_schema;
   CURL *easy;
   struct curl_slist *headers;
   char *post_body;
@@ -96,6 +98,13 @@ void mcp_http_close(mcp_client *);
 mcp_status mcp_http_cache_tools(mcp_client *, json *, mcp_error *);
 json *mcp_identity(mcp_client *);
 bool mcp_retired(mcp_client *, int64_t);
+mcp_schema *mcp_schema_clone(const mcp_schema *);
+mcp_status mcp_schema_result(mcp_request *, json *, mcp_error *);
+mcp_status mcp_validate_phase(const mcp_schema *, const char *, const char *, mcp_response *, mcp_error *);
+struct mcp_tool {
+  char *name;
+  mcp_schema *input, *output;
+};
 bool mcp_filter_valid(json *);
 mcp_status mcp_invoke(mcp_client *, const char *, json *, json **, bool *,
                       mcp_error *);

@@ -3,10 +3,11 @@
 A C11 MCP **client** library for Ground's D `-betterC` harness. Builds static
 and shared libraries with a C ABI in `include/mcp.h`. Handwritten D bindings
 live in [Ground](https://github.com/teranos/ground/blob/main/source/libmcp.d).
-MIT, like Ground.
+The C wrapper is MIT, like Ground. The bundled Corvus validator is Apache-2.0;
+its transitive dependencies retain their own licenses under `vendor/crates`.
 
-The [0.3 work plan](ROADMAP-0.3.md) records the next release gates. This branch
-starts that work; OAuth and full runtime schema validation are still absent.
+This is the **0.4.0-dev schema-validation increment**. See [the release notes](RELEASE-0.4.md)
+for the implemented scope, dependency choice and remaining release gates.
 
 Ground owns the connections, catalogs and dispatch. Provider adapters can use
 them without owning MCP processes or introducing another language runtime.
@@ -21,7 +22,8 @@ nix build .#libmcp --no-link
 make install PREFIX="$HOME/.local"
 ```
 
-Outside Nix: C11, make, pkg-config, json-c and libcurl (7.85+); tests also need
+Outside Nix: C11, make, pkg-config, json-c, libcurl (7.85+) and Rust/Cargo
+1.89 or newer; all Cargo dependencies are vendored and built offline. Tests also need
 Python 3. json-c 0.18 requires the upstream fix in `json-c-strict-utf8.patch`: its
 strict mode otherwise rejects valid UTF-8. The flake applies this fix to its
 locked dependency. json-c 0.17 works unpatched. Validation remains strict.
@@ -31,10 +33,14 @@ library is built for tests; consumers embed the archive. Link an installed
 consumer with `pkg-config --cflags --libs --static libmcp`, or use the build tree:
 
 ```sh
-cc client.c build/libmcp.a -Iinclude $(pkg-config --cflags --libs json-c libcurl)
+cc client.c build/libmcp.a -Iinclude $(pkg-config --cflags --libs json-c libcurl) -lm -lpthread -ldl
 # From a Ground checkout with its D bindings:
-ldc2 -betterC -I=source app.d /path/to/libmcp/build/libmcp.a -L-ljson-c -L-lcurl
+ldc2 -betterC -I=source app.d /path/to/libmcp/build/libmcp.a -L-ljson-c -L-lcurl -L-lm -L-lpthread -L-ldl
 ```
+
+The build-tree commands above are for Linux; use `-liconv` instead of `-ldl`
+on macOS. Installed pkg-config metadata selects these platform libraries. The
+static archive embeds the validator; downstream D consumers do not need Cargo.
 
 ## API and ownership
 
@@ -135,10 +141,13 @@ definitions, for diagnostics. Valid `x-mcp-header` annotations are mirrored as
 append. Refresh the catalog when tools change. Concurrent catalog refreshes are
 not supported. No automatic replay occurs after HeaderMismatch.
 
-General JSON Schema 2020-12 validation remains a host responsibility. The
-library validates framing, correlation, multi-round envelopes, progress,
-subscription filters and HTTP header annotations; these checks do not substitute
-for full schema validation. It never fetches external schema references.
+Runtime JSON Schema validation is available through `mcp_schema_compile` and
+`mcp_schema_validate`. The default dialect is 2020-12. Compile a discovered tool
+with `mcp_tool_compile`, then use `mcp_tool_submit` or `mcp_tool_call` to validate
+arguments before dispatch and structured output before success. Existing raw
+request and `mcp_tools_call` APIs remain unchecked for compatibility.
+See [SCHEMA.md](SCHEMA.md) for ownership, diagnostics and the supported profile.
+No schema references are fetched from the network.
 
 ## Validation
 

@@ -419,6 +419,14 @@ mcp_status mcp_dispatch(mcp_client *c, mcp_request *origin, const char *text,
           return s;
         }
       }
+      if (!strcmp(r->method, "tools/call")) {
+        s = mcp_schema_result(r, result, e);
+        if (s != MCP_OK) {
+          mcp_finish(r, s, e);
+          json_object_put(o);
+          return MCP_OK; /* Semantic failure belongs only to this request. */
+        }
+      }
       mcp_finish(r,
                  !strcmp(r->method, "tools/call") &&
                          json_object_get_boolean(tool_error)

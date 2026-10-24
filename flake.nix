@@ -32,10 +32,13 @@
             version = self.shortRev or "dirty";
             src = ./.;
 
-            nativeBuildInputs = [ pkgs.pkg-config pkgs.python3 ];
+            # The archive merges the validator in with libtool on Darwin, and the
+            # build sandbox has none until cctools is named.
+            nativeBuildInputs = [ pkgs.pkg-config pkgs.python3 pkgs.cargo pkgs.rustc ]
+              ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.cctools;
             buildInputs = [ (jsonC pkgs) pkgs.curl ];
 
-            buildPhase = "make";
+            buildPhase = "export CARGO_HOME=$TMPDIR/cargo; make";
             doCheck = true;
             checkPhase = "make test";
             installPhase = "make install PREFIX=$out";
@@ -50,7 +53,8 @@
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.pkg-config pkgs.python3 (jsonC pkgs) pkgs.curl ];
+            packages = [ pkgs.pkg-config pkgs.python3 pkgs.cargo pkgs.rustc (jsonC pkgs) pkgs.curl ]
+              ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.cctools;
           };
         });
     };

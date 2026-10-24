@@ -139,6 +139,10 @@ class Peer(BaseHTTPRequestHandler):
             ]
         elif method == "tools/call":
             result["content"] = [{"type": "text", "text": "ok"}]
+            if params.get("name") == "checked-output":
+                result["structuredContent"] = params["arguments"].get("value")
+                if params["arguments"].get("error"):
+                    result["isError"] = True
         elif method == "resources/read" and "requestState" not in params:
             result = {"resultType": "input_required", "requestState": "next"}
             headers["WWW-Authenticate"] = 'Bearer realm="first-round"'
