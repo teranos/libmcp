@@ -72,9 +72,12 @@ class MCP(unittest.TestCase):
         self.options.command = self.argv[0]
         self.options.argv = self.argv
         self.options.on_message = self.callback
+        # timeout_ms stays 400: test_deadline_keeps_connection_usable measures
+        # it. The probe and shutdown windows are wide enough for an interpreter
+        # to start on a loaded machine (#3); silent-probe still falls back.
         self.options.timeout_ms = 400
-        self.options.probe_timeout_ms = 200
-        self.options.shutdown_timeout_ms = 50
+        self.options.probe_timeout_ms = 2000
+        self.options.shutdown_timeout_ms = 1000
         for k, v in changes.items():
             setattr(self.options, k, v)
         return lib.mcp_client_open(C.byref(self.options), C.byref(self.client), C.byref(self.response), C.byref(self.error))
@@ -198,7 +201,7 @@ class MCP(unittest.TestCase):
         self.assertEqual(self.request("ping"), 8)
 
     def test_shutdown_reports_forced_termination(self):
-        self.assertEqual(self.open(), 0)
+        self.assertEqual(self.open(shutdown_timeout_ms=50), 0)  # the window this test measures
         self.assertEqual(self.request("test/hang-close"), 0)
         start = time.monotonic()
         self.assertEqual(self.close(), 4)
