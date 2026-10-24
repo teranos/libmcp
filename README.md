@@ -1,8 +1,12 @@
 # libMCP
 
 A C11 MCP **client** library for Ground's D `-betterC` harness. Builds static
-and shared libraries with a C ABI in `include/mcp.h` and handwritten bindings
-in [`source/libmcp.d`](../source/libmcp.d). MIT, like Ground.
+and shared libraries with a C ABI in `include/mcp.h`. Handwritten D bindings
+live in [Ground](https://github.com/teranos/ground/blob/main/source/libmcp.d).
+MIT, like Ground.
+
+The [0.3 work plan](ROADMAP-0.3.md) records the next release gates. This branch
+starts that work; OAuth and full runtime schema validation are still absent.
 
 Ground owns the connections, catalogs and dispatch. Provider adapters can use
 them without owning MCP processes or introducing another language runtime.
@@ -11,24 +15,25 @@ them without owning MCP processes or introducing another language runtime.
 
 ```sh
 nix develop
-make -C libmcp
-make test-mcp
+make
+make test
 nix build .#libmcp --no-link
-make -C libmcp install PREFIX="$HOME/.local"
+make install PREFIX="$HOME/.local"
 ```
 
-Outside Nix: C11, make, pkg-config, json-c and libcurl (7.85+); tests also need Python 3 and
-LDC. json-c 0.18 requires the upstream fix in `json-c-strict-utf8.patch`: its
+Outside Nix: C11, make, pkg-config, json-c and libcurl (7.85+); tests also need
+Python 3. json-c 0.18 requires the upstream fix in `json-c-strict-utf8.patch`: its
 strict mode otherwise rejects valid UTF-8. The flake applies this fix to its
 locked dependency. json-c 0.17 works unpatched. Validation remains strict.
 
-Installation includes `mcp.h`, both libraries, `libmcp.pc`, and the D binding
-under `include/d`. Link shared consumers using `pkg-config --cflags --libs
-libmcp`. For static linkage select the archive explicitly and include its dependencies:
+Installation includes `mcp.h`, the static archive and `libmcp.pc`. The shared
+library is built for tests; consumers embed the archive. Link an installed
+consumer with `pkg-config --cflags --libs --static libmcp`, or use the build tree:
 
 ```sh
-cc client.c libmcp/build/libmcp.a -Ilibmcp/include $(pkg-config --cflags --libs json-c libcurl)
-ldc2 -betterC -I=source app.d libmcp/build/libmcp.a -L-ljson-c -L-lcurl
+cc client.c build/libmcp.a -Iinclude $(pkg-config --cflags --libs json-c libcurl)
+# From a Ground checkout with its D bindings:
+ldc2 -betterC -I=source app.d /path/to/libmcp/build/libmcp.a -L-ljson-c -L-lcurl
 ```
 
 ## API and ownership
@@ -37,8 +42,8 @@ Initialize `mcp_options` with `mcp_options_init`, set `command`, null-terminated
 `argv` (including argv[0]), and `client_name`, then call `mcp_client_open`.
 Initialize each `mcp_response` to zero, consume it on success **and failure**,
 and release it with `mcp_response_free` before reuse. `mcp_client_close` consumes
-the handle, including on failure. [`tests/client.c`](tests/client.c) and
-[`examples/client.d`](examples/client.d) are executable examples.
+the handle, including on failure. [`tests/client.c`](tests/client.c) is an
+executable embedding example.
 
 Helpers cover tools, resources, resource templates, prompts, completions and
 subscriptions. `mcp_client_request` waits for one response; `mcp_client_call`
@@ -51,8 +56,7 @@ request has its own deadline and cancellation. Completed handles count toward
 `max_pending` until destroyed (64 by default). Acknowledged subscriptions remain
 active until cancelled, completed or disconnected. libMCP runs on the polling thread; libcurl may use resolver threads.
 All access to one client must happen on one thread at a time; independent
-clients may run concurrently. The [async D example](examples/async.d) exercises
-concurrent requests and a host elicitation callback without druntime or GC.
+clients may run concurrently.
 
 Responses retain the exact wire frame without its terminal newline. Remote
 JSON-RPC errors, tool `isError` results, and input-required results have distinct
@@ -79,34 +83,10 @@ error, not success.
 
 ## Ground harness integration
 
-ACP `session/new` now connects the stdio servers in `params.mcpServers`.
-Each configuration has `name`, `command`, `args` and `env`; environment entries
-are `{ "name": "KEY", "value": "value" }` and override inherited keys.
-Processes run in the session's `cwd`.
-
-Configuration is validated before spawning. Limits: 32 unique server names per
-session, 128 arguments and 128 environment entries per server. A session owns
-every connection and all initial `tools/list` pages (maximum 128 pages, repeated
-cursor rejected). Partial setup rolls back. `session/close` and host EOF close
-and reap the children. Cleanup errors reach stderr and the ACP response; large
-error payloads grow the reply buffer instead of being cut to 4096 bytes.
-
-[`source/code/mcp.d`](../source/code/mcp.d) exposes `McpGroup`,
-`McpServer.tools` and `callMcpTool(group, serverName, toolName, arguments,
-response, error)` to the harness. The `(server, tool)` pair prevents collisions
-between servers exposing identically named tools.
-
-This change supplies the MCP client layer. Ground's model/provider loop,
-`session/prompt`, tool approval policy and ACP tool-call updates remain separate
-harness work. No custom ACP tool-dispatch method is added.
-
-For direct diagnostics, Ground and the standalone D client use the same ABI:
-
-```sh
-make -C libmcp test-d
-libmcp/build/mcp-client tools/list '{}' -- /path/to/mcp-server
-ground mcp tools/call '{"name":"echo","arguments":{"text":"hello"}}' -- /path/to/mcp-server
-```
+Ground owns connection groups, catalogs, tool dispatch, approval policy and
+credential storage. The library owns transport and protocol mechanics. D
+bindings and harness integration tests belong to the Ground repository; this
+standalone package exports a C ABI and adds no D runtime dependency.
 
 ## Protocol scope
 
@@ -132,6 +112,21 @@ challenge, obtain a token through your host, set it with `mcp_client_set_bearer`
 then explicitly retry discovery. The library never refreshes or stores tokens
 on disk. It does not implement OAuth discovery, authorization or registration.
 
+For concurrent HTTP operations, retain each `mcp_request` and use
+`mcp_request_http_status`, `mcp_request_transport_code`, and
+`mcp_request_auth_challenge` after completion. A different request cannot
+replace these diagnostics, and `mcp_request_take` leaves them intact. Repeated
+`WWW-Authenticate` fields are combined in wire order with comma-space separators;
+the combined value has the same configured byte limit as messages. This is raw
+header text, not a parsed OAuth challenge. Failed transfers may have partial
+headers. Copy the borrowed challenge before resuming or destroying the request
+or closing its client. A continuation resets diagnostics for its new round.
+
+The older client-wide accessors retain their last-observed semantics and can
+mix observations from concurrent transfers. Synchronous convenience calls destroy
+their request handles; use submit/poll/take when request diagnostics are needed.
+No HTTP error or authentication challenge automatically replays a tool call.
+
 HTTP tool discovery builds a filtered catalog accessible through
 `mcp_client_tools_catalog`. Use that catalog for tool selection; raw
 `tools/list` responses preserve the original wire JSON, including rejected tool
@@ -147,15 +142,12 @@ for full schema validation. It never fetches external schema references.
 
 ## Validation
 
-`make test-mcp`: shared C ABI subprocess tests, a static C client, measured C/D
-layouts, D round trips, asynchronous D callbacks, multiplexing/cancellation/MRTR,
-legacy client-feature replies, loopback HTTP/SSE, and the D harness boundary.
-Linux also fault-injects parser allocation failure to verify typed OOM errors.
-`python3 libmcp/tests/test_ground.py ./ground`: actual ACP session ownership,
-pagination, env/cwd, rollback, malformed configuration, large errors and EOF
-cleanup. CI runs the package and ACP checks on Linux and macOS.
+`make test` runs shared C ABI subprocess tests, a static C embedding client,
+multiplexing/cancellation/MRTR, legacy client-feature replies and loopback
+HTTP/SSE. Linux also injects parser allocation and cancellation I/O failures.
+See [validation evidence](VALIDATION.md) for executed checks and limits.
 
-`make -C libmcp test-interop SDK_ROOT=/path/to/python-sdk SDK_PYTHON=/path/to/venv/bin/python`
+`make test-interop SDK_ROOT=/path/to/python-sdk SDK_PYTHON=/path/to/venv/bin/python`
 runs independent stdio/HTTP JSON/HTTP SSE tests against the pinned official SDK
 and validates its tool results against the vendored schema. See
 [reproduction instructions](spec/README.md). This optional test target requires

@@ -33,6 +33,14 @@ lib.mcp_client_auth_challenge.argtypes = [C.c_void_p]
 lib.mcp_client_auth_challenge.restype = C.c_char_p
 lib.mcp_client_http_status.argtypes = [C.c_void_p]
 lib.mcp_client_http_status.restype = C.c_long
+for name, restype in (
+    ("auth_challenge", C.c_char_p),
+    ("http_status", C.c_long),
+    ("transport_code", C.c_int),
+):
+    accessor = getattr(lib, "mcp_request_" + name)
+    accessor.argtypes = [C.c_void_p]
+    accessor.restype = restype
 lib.mcp_client_tools_catalog.argtypes = [
     C.c_void_p,
     C.POINTER(base.Response),
@@ -45,6 +53,12 @@ class Peer(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
+
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Cancellation and header-limit rejection close the connection.
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -125,6 +139,9 @@ class Peer(BaseHTTPRequestHandler):
             ]
         elif method == "tools/call":
             result["content"] = [{"type": "text", "text": "ok"}]
+        elif method == "resources/read" and "requestState" not in params:
+            result = {"resultType": "input_required", "requestState": "next"}
+            headers["WWW-Authenticate"] = 'Bearer realm="first-round"'
         elif method == "subscriptions/listen":
             meta = {"io.modelcontextprotocol/subscriptionId": ident}
             messages = [
@@ -166,6 +183,19 @@ class Peer(BaseHTTPRequestHandler):
                 'Bearer resource_metadata="https://example.invalid/.well-known/oauth-protected-resource"'
             )
             result = {"message": "expired"}
+        elif method == "test/forbidden":
+            status = 403
+            headers["WWW-Authenticate"] = 'Bearer error="insufficient_scope"'
+        elif method in ("test/challenges", "test/challenge-limit"):
+            status = 401
+        elif method == "test/interim":
+            self.send_response_only(103)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("WWW-Authenticate", 'Bearer realm="interim"')
+            self.end_headers()
+        elif method == "test/disconnect":
+            self.close_connection = True
+            return
         elif method == "test/redirect":
             status = 302
             headers["Location"] = "/stolen"
@@ -198,16 +228,23 @@ class Peer(BaseHTTPRequestHandler):
                 + b"\r\n\r\n"
             )
         self.send_response(status)
-        self.send_header(
-            "Content-Type",
-            "text/plain"
-            if method == "test/content-type"
-            else "text/event-stream"
-            if sse
-            else "application/json",
-        )
+        if method != "resources/read" or "requestState" not in params:
+            self.send_header(
+                "Content-Type",
+                "text/plain"
+                if method == "test/content-type"
+                else "text/event-stream"
+                if sse
+                else "application/json",
+            )
         for k, v in headers.items():
             self.send_header(k, v)
+        if method == "test/challenges":
+            self.send_header("WWW-Authenticate", 'Basic realm="one,two"')
+            self.send_header("WWW-Authenticate", 'Bearer realm="three"')
+        if method == "test/challenge-limit":
+            for _ in range(2):
+                self.send_header("WWW-Authenticate", 'Bearer realm="' + "x" * 600 + '"')
         self.send_header("Content-Length", str(len(wire)))
         self.end_headers()
         try:
@@ -261,6 +298,7 @@ class HTTP(unittest.TestCase):
         lib.mcp_response_free(C.byref(self.response))
 
     def tearDown(self):
+        self.doCleanups()
         lib.mcp_response_free(C.byref(self.response))
         lib.mcp_client_close(self.client, C.byref(self.error))
 
@@ -273,6 +311,126 @@ class HTTP(unittest.TestCase):
             C.byref(self.response),
             C.byref(self.error),
         )
+
+    def submit(self, method):
+        req = C.c_void_p()
+        self.assertEqual(
+            lib.mcp_client_submit(
+                self.client,
+                method.encode(),
+                b"{}",
+                1000,
+                C.byref(req),
+                C.byref(self.error),
+            ),
+            0,
+            self.error.message,
+        )
+        self.addCleanup(lib.mcp_request_destroy, req, None)
+        return req
+
+    def finish(self, req):
+        deadline = time.monotonic() + 2
+        while lib.mcp_request_status(req) == 13:
+            self.assertLess(time.monotonic(), deadline)
+            self.assertEqual(
+                lib.mcp_client_poll(self.client, 20, C.byref(self.error)),
+                0,
+                self.error.message,
+            )
+        return lib.mcp_request_status(req)
+
+    def test_request_diagnostics_survive_other_transfers_and_take(self):
+        first = self.submit("test/auth")
+        second = self.submit("test/forbidden")
+        self.assertEqual(lib.mcp_request_http_status(first), 0)
+        self.assertIsNone(lib.mcp_request_auth_challenge(first))
+        self.assertEqual(self.finish(first), 16)
+        self.assertEqual(self.finish(second), 15)
+        self.assertEqual(self.request("ping"), 0)
+        for req, status, challenge in (
+            (first, 401, b'resource_metadata="https://example.invalid/'),
+            (second, 403, b'error="insufficient_scope"'),
+        ):
+            lib.mcp_response_free(C.byref(self.response))
+            self.assertIn(
+                lib.mcp_request_take(req, C.byref(self.response), C.byref(self.error)),
+                (15, 16),
+            )
+            self.assertTrue(self.response.json)
+            self.assertEqual(lib.mcp_request_http_status(req), status)
+            self.assertEqual(lib.mcp_request_transport_code(req), 0)
+            self.assertIn(challenge, lib.mcp_request_auth_challenge(req))
+
+    def test_repeated_challenges_preserve_order_and_quoted_commas(self):
+        req = self.submit("test/challenges")
+        self.assertEqual(self.finish(req), 16)
+        self.assertEqual(
+            lib.mcp_request_auth_challenge(req),
+            b'Basic realm="one,two", Bearer realm="three"',
+        )
+
+    def test_interim_headers_do_not_leak_into_final_response(self):
+        req = self.submit("test/interim")
+        self.assertEqual(self.finish(req), 0)
+        self.assertEqual(lib.mcp_request_http_status(req), 200)
+        self.assertIsNone(lib.mcp_request_auth_challenge(req))
+
+    def test_transport_failure_is_request_owned(self):
+        req = self.submit("test/disconnect")
+        self.assertEqual(self.finish(req), 3)
+        code = lib.mcp_request_transport_code(req)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.request("ping"), 0)
+        self.assertEqual(lib.mcp_request_transport_code(req), code)
+        self.assertEqual(lib.mcp_request_http_status(req), 0)
+
+    def test_sse_and_cancel_diagnostics(self):
+        req = self.submit("test/sse")
+        self.assertEqual(self.finish(req), 0)
+        self.assertEqual(lib.mcp_request_http_status(req), 200)
+        held = self.submit("test/hold")
+        self.assertEqual(lib.mcp_request_cancel(held, b"done", None), 0)
+        self.assertEqual(lib.mcp_request_status(held), 14)
+        self.assertEqual(lib.mcp_request_http_status(held), 0)
+        self.assertEqual(lib.mcp_request_transport_code(held), 0)
+
+    def test_challenges_have_an_aggregate_bound(self):
+        lib.mcp_client_close(self.client, None)
+        self.opts.max_message_bytes = 1024
+        self.assertEqual(
+            lib.mcp_client_create_http(
+                C.byref(self.opts),
+                None,
+                self.url,
+                None,
+                C.byref(self.client),
+                C.byref(self.error),
+            ),
+            0,
+        )
+        req = self.submit("test/challenge-limit")
+        self.assertEqual(self.finish(req), 9)
+        self.assertEqual(lib.mcp_request_http_status(req), 401)
+        self.assertLessEqual(len(lib.mcp_request_auth_challenge(req)), 1024)
+
+    def test_resume_resets_diagnostics_and_content_type(self):
+        req = self.submit("resources/read")
+        self.assertEqual(self.finish(req), 10)
+        self.assertEqual(lib.mcp_request_http_status(req), 200)
+        self.assertEqual(
+            lib.mcp_request_auth_challenge(req), b'Bearer realm="first-round"'
+        )
+        self.assertEqual(lib.mcp_request_resume(req, b"[]", None), 1)
+        self.assertEqual(lib.mcp_request_http_status(req), 200)
+        self.assertEqual(lib.mcp_request_resume(req, b"{}", None), 0)
+        self.assertEqual(lib.mcp_request_http_status(req), 0)
+        self.assertEqual(lib.mcp_request_transport_code(req), 0)
+        self.assertIsNone(lib.mcp_request_auth_challenge(req))
+        # The second response omits Content-Type: the first round cannot supply it.
+        self.assertEqual(self.finish(req), 6)
+        self.assertEqual(lib.mcp_request_http_status(req), 200)
+        self.assertIsNone(lib.mcp_request_auth_challenge(req))
 
     def test_initial_auth_challenge_and_explicit_discovery(self):
         lib.mcp_client_close(self.client, C.byref(self.error))

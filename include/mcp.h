@@ -121,6 +121,8 @@ mcp_status mcp_client_set_bearer(mcp_client *, const char *token, mcp_error *);
 /* Filtered HTTP tool catalog; raw tools/list responses remain byte-exact.
  * Invalid header annotations are excluded here. Refresh tools/list before use. */
 mcp_status mcp_client_tools_catalog(mcp_client *, mcp_response *, mcp_error *);
+/* Compatibility accessors: client-wide last-observed values, potentially from
+ * different transfers. Use request diagnostics for concurrent operations. */
 const char *mcp_client_auth_challenge(const mcp_client *);
 long mcp_client_http_status(const mcp_client *);
 int mcp_client_transport_code(const mcp_client *);
@@ -136,6 +138,19 @@ mcp_status mcp_client_submit(mcp_client *, const char *method, const char *param
 mcp_status mcp_client_poll(mcp_client *, int timeout_ms, mcp_error *);
 int64_t mcp_request_id(const mcp_request *);
 mcp_status mcp_request_status(const mcp_request *);
+/* Diagnostics for this request's current HTTP round. Zero/NULL for NULL,
+ * stdio, or values not yet observed. Inspect after completion; values can
+ * change while pending. transport_code is a libcurl CURLcode, not errno;
+ * zero does not imply success (e.g. cancellation before a transfer finishes).
+ * The challenge is borrowed, with repeated WWW-Authenticate fields joined by
+ * ", " in wire order, bounded in aggregate by max_message_bytes. It is not
+ * parsed. Only the latest HTTP header block is retained. A failed transfer
+ * can have partial diagnostics. Copy anything needed beyond resume/destroy
+ * or client close. take does not consume diagnostics; a new continuation
+ * round resets them. No automatic authentication retry is performed. */
+const char *mcp_request_auth_challenge(const mcp_request *);
+long mcp_request_http_status(const mcp_request *);
+int mcp_request_transport_code(const mcp_request *);
 mcp_status mcp_request_take(mcp_request *, mcp_response *, mcp_error *);
 mcp_status mcp_request_cancel(mcp_request *, const char *reason, mcp_error *);
 mcp_status mcp_request_resume(mcp_request *, const char *input_responses, mcp_error *);

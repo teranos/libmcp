@@ -1,4 +1,4 @@
-# libMCP 0.2 coverage
+# libMCP coverage (0.3 development)
 
 Target: MCP **2026-07-28**, specification commit
 `dae694f61a31f7a3ec2af3aff709e11f70f61e48`. This is an implementation coverage
@@ -11,10 +11,10 @@ all adversarial inputs, platforms or optional extensions.
 | JSON-RPC framing | Implemented | Bounded newline stdio frames; UTF-8/RFC 8259 checks; IDs and error/result exclusivity; wire error payload retained. `test_mcp.py`, `tests/json.c`. |
 | Modern versioning | Implemented | Discovery and required per-request metadata; recognized modern errors prohibit downgrade. `test_mcp.py`, official SDK. |
 | Legacy lifecycle | Implemented on stdio | Four supported legacy versions, initialized notification, ping and host feature replies. `test_mcp.py`, `test_features.py`, SDK. |
-| Concurrent requests | Implemented | Poll-driven, out-of-order completion and independent deadlines; no libMCP background thread. `test_runtime.py`, `examples/async.d`. |
+| Concurrent requests | Implemented | Poll-driven, out-of-order completion and independent deadlines; no libMCP background thread. `test_runtime.py`; D integration lives in Ground. |
 | Cancellation | Implemented | Stdio cancellation notifications; queued unsent requests removed; HTTP transfer/stream closed; stale responses ignored using monotonic issued IDs. `test_runtime.py`, `test_http.py`. Legacy initialize is not cancelled on wire. |
 | Progress | Implemented | Unique active string/integer tokens; finite numeric and increasing progress; float values and origin correlation. `test_runtime.py`. |
-| Multi-round input | Implemented | Three permitted originating methods; declared capability checks; exact opaque state, fresh IDs, scoped inputs, original deadline; explicit resume or host callbacks. `test_runtime.py`, D async example. |
+| Multi-round input | Implemented | Three permitted originating methods; declared capability checks; exact opaque state, fresh IDs, scoped inputs, original deadline; explicit resume or host callbacks. `test_runtime.py`; D integration lives in Ground. |
 | Roots | Host callback | Opt-in modern compatibility/MRTR and legacy requests; host supplies roots and enforces URI/access policy. Legacy callback test. Deprecated in modern target. |
 | Sampling | Host callback | Capability-gated request dispatch, including tools capability; host runs models and validates results. Legacy callback test. Deprecated in modern target. |
 | Elicitation | Host callback | Explicit form/URL capabilities, MRTR and legacy dispatch; host owns UI, consent and content validation. Form MRTR and legacy tests; URL flow is not independently integration-tested. |
@@ -26,7 +26,7 @@ all adversarial inputs, platforms or optional extensions.
 | Legacy resource subscriptions and logging | Implemented wire helpers | `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel`; disabled for modern peers, which use subscription requests and per-request metadata. No independent legacy subscription server test. |
 | Modern HTTP JSON/SSE | Implemented | POST, both Accept types, fragmented UTF-8 SSE/CRLF/comments/BOM, request correlation, response completion and cancellation. Loopback tests and official SDK JSON/SSE. |
 | HTTP MCP headers | Implemented | Version/method/name; sentinel Base64; static primitive `Mcp-Param-*` mirroring; invalid tool exclusion in filtered catalog. Raw wire response intentionally retained separately. HeaderMismatch refresh/retry is host-owned. |
-| HTTP authentication boundary | Implemented | Caller-provided endpoint bearer, status/body/challenge, explicit replacement, TLS verification and no redirects. Tokens never persisted or forwarded to redirects. No actual OAuth authorization server test. |
+| HTTP authentication boundary | Implemented | Caller-provided endpoint bearer, request-owned status/transport code/challenge and raw body, explicit replacement, TLS verification and no redirects. Concurrency, repeated challenge fields, aggregate limits and continuation resets: `test_http.py`. Tokens never persisted or forwarded to redirects. No actual OAuth authorization server test. |
 | OAuth authorization | **Absent** | Protected-resource metadata, AS/OIDC discovery, issuer validation, resource indicators, PKCE, state, registration and token storage are host-owned. Not an OAuth-conformant standalone client. |
 | Full JSON Schema 2020-12 | **Absent at runtime** | No input/output/elicitation full validator. Vendored schema and Python jsonschema are test oracles only. No external-reference network fetches. This remains a material completeness gap. |
 | Legacy HTTP and HTTP+SSE | **Absent** | Modern-only HTTP; no old session/GET transport or automatic HTTP-era fallback. |

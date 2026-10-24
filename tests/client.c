@@ -25,6 +25,20 @@ int main(int argc, char **argv) {
     mcp_error error = {0};
     assert(mcp_client_open(&options, &client, &response, &error) == MCP_OK);
     mcp_response_free(&response);
+    /* New opaque-handle accessors must link from an ordinary static consumer
+     * without changing any existing public struct layouts. */
+    assert(mcp_request_http_status(NULL) == 0);
+    assert(mcp_request_transport_code(NULL) == 0);
+    assert(mcp_request_auth_challenge(NULL) == NULL);
+    mcp_request *request = NULL;
+    assert(mcp_client_submit(client, "ping", "{}", 1000, &request, &error) == MCP_OK);
+    while (mcp_request_status(request) == MCP_PENDING)
+        assert(mcp_client_poll(client, 20, &error) == MCP_OK);
+    assert(mcp_request_status(request) == MCP_OK);
+    assert(mcp_request_http_status(request) == 0);
+    assert(mcp_request_transport_code(request) == 0);
+    assert(mcp_request_auth_challenge(request) == NULL);
+    assert(mcp_request_destroy(request, &error) == MCP_OK);
     assert(mcp_tools_list(client, NULL, &response, &error) == MCP_OK);
     mcp_response_free(&response);
     assert(mcp_tools_call(client, "echo", "{\"text\":\"☃\"}", &response, &error) == MCP_OK);

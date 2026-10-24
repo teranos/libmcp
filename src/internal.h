@@ -35,7 +35,7 @@ struct mcp_request {
   CURL *easy;
   struct curl_slist *headers;
   char *post_body;
-  mcp_buffer body, sse_line, sse_data;
+  mcp_buffer body, sse_line, sse_data, auth_challenge;
   bool json_content_type, sse, sse_skip_lf, sse_first, sse_message, http_done;
   long http_status;
   int transport_code;

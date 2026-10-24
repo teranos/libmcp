@@ -1,4 +1,44 @@
-# Validation of 0.2
+# Validation
+
+## 0.3 first increment: request-owned HTTP diagnostics
+
+Executed on Linux with json-c 0.17 and libcurl 8.5.0:
+
+- `make test`: 62 Python tests (28 base, 14 runtime, one legacy feature test,
+  19 HTTP tests), static C embedding, parser allocation and cancellation I/O
+  fault injection passed.
+- `make test-interop` against the SDK pin in `spec/PINNED.json`: all four
+  independent modern/legacy stdio and HTTP JSON/SSE tests passed.
+- All 19 HTTP tests passed with AddressSanitizer and UndefinedBehaviorSanitizer.
+  Leak detection was disabled; no leak-check claim is made.
+- `make install PREFIX=/absolute/staging/path` followed by compilation and
+  execution of `tests/client.c` against the installed header/archive passed.
+  Dependencies were linked with `pkg-config --cflags --libs json-c libcurl`.
+  The fully expanded `pkg-config --static libmcp` link was not verified here:
+  this environment lacks development libraries for libcurl's transitive deps.
+- No macOS, Nix or D execution was performed for this increment. Existing
+  public struct layouts are unchanged; the new accessors take opaque handles.
+
+The seven added HTTP regressions cover per-request 401/403 diagnostics despite
+other completions and `take`, repeated challenges with quoted commas, interim
+header reset, independent transport failures, SSE/cancellation diagnostics,
+aggregate challenge limits, and continuation diagnostics/Content-Type reset.
+The static C consumer exercises the new symbols for NULL and stdio handles.
+
+Reproduce the sanitizer check from the repository root:
+
+```sh
+make BUILD=build-sanitize CFLAGS='-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fPIC -fsanitize=address,undefined -fno-omit-frame-pointer'
+ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+  LD_PRELOAD="$(cc -print-file-name=libasan.so)" \
+  python3 tests/test_http.py build-sanitize/libmcp.so
+```
+
+## Historical 0.2 validation in Ground
+
+The following records the original Ground integration before extraction into
+this repository. Ground-specific targets and D bindings are not provided by
+the standalone Makefile; these are historical results, not fresh 0.3 checks.
 
 Validated on Linux with system json-c 0.17/libcurl 8.5/LDC 1.36 and the pinned
 Nix environment (patched json-c 0.18/libcurl 8.18/LDC 1.41).

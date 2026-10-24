@@ -12,8 +12,8 @@ To reproduce the independent interoperability tests (Python 3.12):
 git clone https://github.com/modelcontextprotocol/python-sdk /tmp/mcp-python-sdk
 git -C /tmp/mcp-python-sdk checkout 2af9e3089ac66b35c1550c500aae86a82efb1e17
 python3 -m venv /tmp/mcp-interop
-/tmp/mcp-interop/bin/python -m pip install -r libmcp/tests/interop-requirements.txt
-make -C libmcp test-interop SDK_ROOT=/tmp/mcp-python-sdk SDK_PYTHON=/tmp/mcp-interop/bin/python
+/tmp/mcp-interop/bin/python -m pip install -r tests/interop-requirements.txt
+make test-interop SDK_ROOT=/tmp/mcp-python-sdk SDK_PYTHON=/tmp/mcp-interop/bin/python
 ```
 
 The test refuses a different SDK HEAD or a changed schema hash. It runs actual
