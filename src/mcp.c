@@ -247,6 +247,15 @@ int64_t mcp_request_id(const mcp_request *r) { return r ? r->id : 0; }
 mcp_status mcp_request_status(const mcp_request *r) {
   return r ? r->status : MCP_INVALID_ARGUMENT;
 }
+const char *mcp_request_auth_challenge(const mcp_request *r) {
+  return r ? r->auth_challenge.data : NULL;
+}
+long mcp_request_http_status(const mcp_request *r) {
+  return r ? r->http_status : 0;
+}
+int mcp_request_transport_code(const mcp_request *r) {
+  return r ? r->transport_code : 0;
+}
 mcp_status mcp_request_take(mcp_request *r, mcp_response *out, mcp_error *e) {
   if (!r || !out || out->json)
     return mcp_fail(e, MCP_INVALID_ARGUMENT, 0,
@@ -345,7 +354,11 @@ mcp_status mcp_request_resume(mcp_request *r, const char *text, mcp_error *e) {
   r->sse_first = true;
   r->sse_skip_lf = false;
   r->sse = false;
+  r->json_content_type = false;
   r->http_done = false;
+  r->http_status = 0;
+  r->transport_code = 0;
+  mcp_buffer_free(&r->auth_challenge);
   r->receive_error = MCP_OK;
   r->receive_detail = (mcp_error){0};
   mcp_response_free(&r->response);
@@ -381,6 +394,7 @@ mcp_status mcp_request_destroy(mcp_request *r, mcp_error *e) {
   mcp_buffer_free(&r->sse_line);
   mcp_buffer_free(&r->sse_data);
   free(r->method);
+  mcp_buffer_free(&r->auth_challenge);
   free(r);
   return s;
 }

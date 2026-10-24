@@ -302,6 +302,12 @@ static size_t receive(char *p, size_t size, size_t count, void *ctx) {
 static size_t receive_header(char *p, size_t size, size_t count, void *ctx) {
   mcp_request *r = ctx;
   size_t n = size * count;
+  /* A 1xx response (or proxy CONNECT) precedes a separate header block. */
+  if (n >= 5 && !memcmp(p, "HTTP/", 5)) {
+    mcp_buffer_free(&r->auth_challenge);
+    r->sse = false;
+    r->json_content_type = false;
+  }
   if (n > 13 && !strncasecmp(p, "Content-Type:", 13)) {
     const char *v = p + 13;
     while (v < p + n && (*v == ' ' || *v == '\t'))
@@ -320,9 +326,23 @@ static size_t receive_header(char *p, size_t size, size_t count, void *ctx) {
     while (end > v && (end[-1] == '\r' || end[-1] == '\n'))
       end--;
     size_t len = (size_t)(end - v);
-    if (len > r->client->limit) {
+    size_t used = r->auth_challenge.len;
+    size_t separator = r->auth_challenge.data ? 2 : 0;
+    if (separator > r->client->limit - used ||
+        len > r->client->limit - used - separator) {
       r->receive_error = mcp_fail(&r->receive_detail, MCP_MESSAGE_TOO_LARGE, 0,
                                   "authentication challenge too large");
+      return 0;
+    }
+    mcp_status rc = MCP_OK;
+    if (separator)
+      rc = mcp_buffer_append(&r->auth_challenge, ", ", separator,
+                             r->client->limit, &r->receive_detail);
+    if (rc == MCP_OK)
+      rc = mcp_buffer_append(&r->auth_challenge, v, len, r->client->limit,
+                             &r->receive_detail);
+    if (rc != MCP_OK) {
+      r->receive_error = rc;
       return 0;
     }
     char *s = malloc(len + 1);
@@ -472,6 +492,7 @@ mcp_status mcp_http_submit(mcp_request *r, json *o, mcp_error *e) {
   do {                                                                         \
     CURLcode rc = curl_easy_setopt(r->easy, option, value);                    \
     if (rc != CURLE_OK) {                                                      \
+      r->transport_code = rc;                                                  \
       c->transport_code = rc;                                                  \
       return mcp_fail(e, MCP_SYSTEM_ERROR, 0, "configure HTTP transfer");      \
     }                                                                          \
