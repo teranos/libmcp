@@ -29,6 +29,13 @@ for line in sys.stdin:
             response(held, {"value": "late"})
             held = None
         continue
+    if "_meta" not in p:
+        # A legacy request, which the client sends when server/discover
+        # missed its probe window. Refused on the wire, not by dying: a dead
+        # server reads as a closed stream and hides the timeout (#3).
+        send({"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601,
+              "message": "runtime server speaks 2026-07-28 only; no _meta on " + method}})
+        continue
     meta = p["_meta"]
     assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
     assert meta["io.modelcontextprotocol/clientCapabilities"] == {

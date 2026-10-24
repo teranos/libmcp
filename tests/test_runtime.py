@@ -72,9 +72,12 @@ class Runtime(unittest.TestCase):
         self.response = base.Response()
         self.opts = base.Options()
         lib.mcp_options_init(C.byref(self.opts))
-        self.opts.timeout_ms = 500
-        self.opts.probe_timeout_ms = 300
-        self.opts.shutdown_timeout_ms = 100
+        # Wide enough for an interpreter to start on a loaded machine: a
+        # 300 ms probe missed once under a parallel build (#3). Tests that
+        # want a timeout ask for one per request with ms=.
+        self.opts.timeout_ms = 5000
+        self.opts.probe_timeout_ms = 5000
+        self.opts.shutdown_timeout_ms = 1000
         self.argv = (C.c_char_p * 3)(sys.executable.encode(), SERVER.encode(), None)
         self.opts.command = self.argv[0]
         self.opts.argv = self.argv
